@@ -17,24 +17,23 @@ void main() {
     final weatherData = WeatherService.parseWeatherResponse(
       location: location,
       json: {
-        'main': {
-          'temp': 298.15,
-          'feels_like': 301.0,
+        'location': {
+          'name': 'Tokyo',
+          'localtime': '2026-07-27 12:00',
+        },
+        'current': {
+          'temp_c': 25.0,
+          'feelslike_c': 27.0,
           'humidity': 60,
-          'pressure': 1012,
+          'pressure_mb': 1012,
+          'wind_kph': 6.5,
+          'vis_km': 10.0,
+          'sunrise': '05:24 AM',
+          'sunset': '06:48 PM',
+          'condition': {
+            'text': 'Clear',
+          },
         },
-        'weather': [
-          {'main': 'Clear'}
-        ],
-        'wind': {
-          'speed': 6.5,
-        },
-        'visibility': 10000,
-        'sys': {
-          'sunrise': 1715000000,
-          'sunset': 1715050000,
-        },
-        'name': 'Tokyo',
       },
     );
 

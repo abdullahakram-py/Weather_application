@@ -5,8 +5,8 @@ import 'package:http/http.dart' as http;
 
 import '../models/weather_model.dart';
 
-const String apiKey = '8a0c4c7b6f794c779d1185213262607';
-const String _baseUrl = 'https://api.openweathermap.org/data/2.5/weather';
+const String apiKey = 'YOUR_WEATHERAPI_COM_KEY';
+const String _baseUrl = 'https://api.weatherapi.com/v1/current.json';
 
 class WeatherService {
   static final List<LocationInfo> availableLocations = const [
@@ -111,7 +111,7 @@ class WeatherService {
     try {
       final response = await http.get(
         Uri.parse(
-          '$_baseUrl?lat=${location.latitude.toStringAsFixed(4)}&lon=${location.longitude.toStringAsFixed(4)}&appid=$apiKey&units=metric',
+          '$_baseUrl?q=${location.city}&key=$apiKey&aqi=no',
         ),
       );
 
@@ -130,24 +130,21 @@ class WeatherService {
     required LocationInfo location,
     required Map<String, dynamic> json,
   }) {
-    final main = json['main'] as Map<String, dynamic>? ?? <String, dynamic>{};
-    final weatherList = json['weather'] as List<dynamic>? ?? const [];
-    final weather = weatherList.isNotEmpty
-        ? weatherList.first as Map<String, dynamic>? ?? <String, dynamic>{}
-        : <String, dynamic>{};
-    final wind = json['wind'] as Map<String, dynamic>? ?? <String, dynamic>{};
-    final sys = json['sys'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    final current = json['current'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    final weather = (current['condition'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final locationData = json['location'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    final wind = current['wind_kph'] as num? ?? 0;
 
-    final temperature = _normalizeTemperature((main['temp'] as num?)?.toDouble());
-    final feelsLike = _normalizeTemperature((main['feels_like'] as num?)?.toDouble()) ?? temperature;
-    final humidity = (main['humidity'] as num?)?.toInt() ?? 50;
-    final pressure = (main['pressure'] as num?)?.toInt() ?? 1013;
-    final windSpeed = (wind['speed'] as num?)?.toDouble() ?? 0.0;
-    final visibility = (json['visibility'] as num?)?.toDouble() ?? 10000;
-    final sunrise = sys['sunrise'] as int?;
-    final sunset = sys['sunset'] as int?;
+    final temperature = (current['temp_c'] as num?)?.toDouble() ?? 20.0;
+    final feelsLike = (current['feelslike_c'] as num?)?.toDouble() ?? temperature;
+    final humidity = (current['humidity'] as num?)?.toInt() ?? 50;
+    final pressure = (current['pressure_mb'] as num?)?.toInt() ?? 1013;
+    final windSpeed = wind.toDouble();
+    final visibility = (current['vis_km'] as num?)?.toDouble() ?? 10.0;
+    final sunrise = _parseTime(locationData['localtime']?.toString(), current['sunrise']?.toString());
+    final sunset = _parseTime(locationData['localtime']?.toString(), current['sunset']?.toString());
 
-    final condition = _conditionFromApi(weather['main']?.toString() ?? 'Clouds');
+    final condition = _conditionFromApi(weather['text']?.toString() ?? 'Cloudy');
     final description = _descriptionFromCondition(condition);
 
     final hourlyForecast = List.generate(6, (index) {
@@ -187,24 +184,17 @@ class WeatherService {
         airQualityIndex: 30 + (humidity % 20),
         airQualityLabel: _airQualityLabel(humidity),
         windSpeedKmH: windSpeed,
-        windDirection: _windDirectionFromDegrees(wind['deg'] as num? ?? 0),
+        windDirection: _windDirectionFromDegrees(0),
         pressureHpa: pressure,
-        visibilityKm: visibility / 1000,
+        visibilityKm: visibility,
         dewPointC: temperature - ((100 - humidity) / 5),
-        sunrise: sunrise == null ? 'N/A' : _formatTime(sunrise),
-        sunset: sunset == null ? 'N/A' : _formatTime(sunset),
+        sunrise: sunrise ?? 'N/A',
+        sunset: sunset ?? 'N/A',
       ),
       hourlyForecast: hourlyForecast,
       dailyForecast: dailyForecast,
       updatedAt: DateTime.now(),
     );
-  }
-
-  static double _normalizeTemperature(double? temperature) {
-    if (temperature == null) {
-      return 20.0;
-    }
-    return temperature > 200 ? temperature - 273.15 : temperature;
   }
 
   static WeatherCondition _conditionFromApi(String condition) {
@@ -289,13 +279,17 @@ class WeatherService {
     return directions[index.toInt()];
   }
 
-  static String _formatTime(int timestamp) {
-    final date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true);
-    final local = date.toLocal();
-    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
-    final minute = local.minute.toString().padLeft(2, '0');
-    final suffix = local.hour >= 12 ? 'PM' : 'AM';
-    return '$hour:$minute $suffix';
+  static String? _parseTime(String? localTime, String? timeString) {
+    if (timeString == null || timeString.isEmpty) {
+      return null;
+    }
+
+    final parts = timeString.split(' ');
+    if (parts.length != 2) {
+      return null;
+    }
+
+    return parts[0];
   }
 
   static WeatherData _buildFallbackWeatherData(LocationInfo location) {
