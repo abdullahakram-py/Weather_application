@@ -7,7 +7,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:flutter_application_1/main.dart';
+import 'package:flutter_application/main.dart';
 
 void main() {
   testWidgets('Glossy weather app smoke test', (WidgetTester tester) async {
