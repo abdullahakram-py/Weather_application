@@ -1,5 +1,12 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:http/http.dart' as http;
+
 import '../models/weather_model.dart';
-const String apiKey = "8a0c4c7b6f794c779d1185213262607";
+
+const String apiKey = '8a0c4c7b6f794c779d1185213262607';
+const String _baseUrl = 'https://api.openweathermap.org/data/2.5/weather';
 
 class WeatherService {
   static final List<LocationInfo> availableLocations = const [
@@ -96,7 +103,202 @@ class WeatherService {
 
   static LocationInfo get defaultLocation => availableLocations[0]; // Tokyo
 
-  static WeatherData getWeatherForLocation(LocationInfo location) {
+  static WeatherData getFallbackWeatherData(LocationInfo location) {
+    return _buildFallbackWeatherData(location);
+  }
+
+  static Future<WeatherData> getWeatherForLocation(LocationInfo location) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$_baseUrl?lat=${location.latitude.toStringAsFixed(4)}&lon=${location.longitude.toStringAsFixed(4)}&appid=$apiKey&units=metric',
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return parseWeatherResponse(location: location, json: decoded);
+      }
+    } catch (_) {
+      // Fall back to local demo data if the API request fails.
+    }
+
+    return _buildFallbackWeatherData(location);
+  }
+
+  static WeatherData parseWeatherResponse({
+    required LocationInfo location,
+    required Map<String, dynamic> json,
+  }) {
+    final main = json['main'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    final weatherList = json['weather'] as List<dynamic>? ?? const [];
+    final weather = weatherList.isNotEmpty
+        ? weatherList.first as Map<String, dynamic>? ?? <String, dynamic>{}
+        : <String, dynamic>{};
+    final wind = json['wind'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    final sys = json['sys'] as Map<String, dynamic>? ?? <String, dynamic>{};
+
+    final temperature = _normalizeTemperature((main['temp'] as num?)?.toDouble());
+    final feelsLike = _normalizeTemperature((main['feels_like'] as num?)?.toDouble()) ?? temperature;
+    final humidity = (main['humidity'] as num?)?.toInt() ?? 50;
+    final pressure = (main['pressure'] as num?)?.toInt() ?? 1013;
+    final windSpeed = (wind['speed'] as num?)?.toDouble() ?? 0.0;
+    final visibility = (json['visibility'] as num?)?.toDouble() ?? 10000;
+    final sunrise = sys['sunrise'] as int?;
+    final sunset = sys['sunset'] as int?;
+
+    final condition = _conditionFromApi(weather['main']?.toString() ?? 'Clouds');
+    final description = _descriptionFromCondition(condition);
+
+    final hourlyForecast = List.generate(6, (index) {
+      final baseTemp = temperature + index * 0.7;
+      return HourlyForecast(
+        time: '${(index + 1).toString()} PM',
+        temperatureC: math.max(0.0, baseTemp),
+        condition: index % 3 == 0 ? condition : _nextCondition(condition, index),
+        precipitationChance: index * 10 + 5,
+        windSpeedKmH: math.max(0.0, windSpeed + index * 0.8),
+      );
+    });
+
+    final dailyForecast = List.generate(7, (index) {
+      final min = temperature - 5.0 - index * 0.3;
+      final max = temperature + 3.0 + index * 0.2;
+      final dailyCondition = index % 2 == 0 ? condition : _nextCondition(condition, index + 2);
+      return DailyForecast(
+        dayName: index == 0 ? 'Today' : _dayName(index),
+        dateStr: _dateLabel(index),
+        tempMinC: min,
+        tempMaxC: max,
+        condition: dailyCondition,
+        rainProbability: index == 0 ? 0 : 10 + (index * 8),
+      );
+    });
+
+    return WeatherData(
+      location: location,
+      currentTempC: temperature,
+      feelsLikeC: feelsLike,
+      condition: condition,
+      description: description,
+      metrics: WeatherMetrics(
+        humidityPercent: humidity,
+        uvIndex: 4.0 + (humidity / 100) * 3.0,
+        airQualityIndex: 30 + (humidity % 20),
+        airQualityLabel: _airQualityLabel(humidity),
+        windSpeedKmH: windSpeed,
+        windDirection: _windDirectionFromDegrees(wind['deg'] as num? ?? 0),
+        pressureHpa: pressure,
+        visibilityKm: visibility / 1000,
+        dewPointC: temperature - ((100 - humidity) / 5),
+        sunrise: sunrise == null ? 'N/A' : _formatTime(sunrise),
+        sunset: sunset == null ? 'N/A' : _formatTime(sunset),
+      ),
+      hourlyForecast: hourlyForecast,
+      dailyForecast: dailyForecast,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  static double _normalizeTemperature(double? temperature) {
+    if (temperature == null) {
+      return 20.0;
+    }
+    return temperature > 200 ? temperature - 273.15 : temperature;
+  }
+
+  static WeatherCondition _conditionFromApi(String condition) {
+    final normalized = condition.toLowerCase();
+    if (normalized.contains('rain') || normalized.contains('drizzle')) {
+      return WeatherCondition.rainy;
+    }
+    if (normalized.contains('thunder') || normalized.contains('storm')) {
+      return WeatherCondition.thunderstorm;
+    }
+    if (normalized.contains('cloud')) {
+      return WeatherCondition.cloudy;
+    }
+    return WeatherCondition.sunny;
+  }
+
+  static String _descriptionFromCondition(WeatherCondition condition) {
+    switch (condition) {
+      case WeatherCondition.sunny:
+        return 'Bright skies and comfortable outdoor conditions.';
+      case WeatherCondition.cloudy:
+        return 'A mild, overcast day with soft light.';
+      case WeatherCondition.rainy:
+        return 'Steady rain is expected throughout the day.';
+      case WeatherCondition.thunderstorm:
+        return 'Stormy conditions with heavy rain and thunder.';
+    }
+  }
+
+  static WeatherCondition _nextCondition(WeatherCondition condition, int index) {
+    final conditions = <WeatherCondition>[
+      WeatherCondition.sunny,
+      WeatherCondition.cloudy,
+      WeatherCondition.rainy,
+      WeatherCondition.thunderstorm,
+    ];
+    return conditions[(conditions.indexOf(condition) + index) % conditions.length];
+  }
+
+  static String _dayName(int index) {
+    final names = <String>['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return names[(index - 1) % names.length];
+  }
+
+  static String _dateLabel(int index) {
+    final now = DateTime.now();
+    final date = now.add(Duration(days: index));
+    return '${_monthShort(date.month)} ${date.day.toString().padLeft(2, '0')}';
+  }
+
+  static String _monthShort(int month) {
+    const months = <String>[
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return months[month - 1];
+  }
+
+  static String _airQualityLabel(int humidity) {
+    if (humidity < 40) {
+      return 'Good';
+    }
+    if (humidity < 70) {
+      return 'Moderate';
+    }
+    return 'Poor';
+  }
+
+  static String _windDirectionFromDegrees(num degrees) {
+    const directions = <String>['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    final index = ((degrees / 45) % 8).round() % 8;
+    return directions[index.toInt()];
+  }
+
+  static String _formatTime(int timestamp) {
+    final date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true);
+    final local = date.toLocal();
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final suffix = local.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $suffix';
+  }
+
+  static WeatherData _buildFallbackWeatherData(LocationInfo location) {
     switch (location.id) {
       case 'tokyo':
         return WeatherData(

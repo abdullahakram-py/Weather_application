@@ -61,13 +61,21 @@ class _WeatherHomeScreenState extends State<WeatherHomeScreen> {
   void initState() {
     super.initState();
     _selectedLocation = WeatherService.defaultLocation; // Tokyo
+    _currentWeatherData = WeatherService.getFallbackWeatherData(_selectedLocation);
     _loadWeatherData(_selectedLocation);
   }
 
-  void _loadWeatherData(LocationInfo location) {
+  Future<void> _loadWeatherData(LocationInfo location) async {
     setState(() {
       _selectedLocation = location;
-      _currentWeatherData = WeatherService.getWeatherForLocation(location);
+      _currentWeatherData = WeatherService.getFallbackWeatherData(location);
+    });
+
+    final weatherData = await WeatherService.getWeatherForLocation(location);
+    if (!mounted) return;
+
+    setState(() {
+      _currentWeatherData = weatherData;
     });
   }
 
